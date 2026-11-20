@@ -1,0 +1,94 @@
+# 퀀트 자동매매 설정 (국내 주식, 일봉 기준)
+
+capital: 10000000          # 초기 자본(원)
+data_start: "2014-01-01"   # 지표 계산용 데이터 시작일
+backtest_start: "2016-01-01"
+
+index: "069500"            # 시장 국면 판단 + 벤치마크 (KODEX 200)
+
+costs:
+  commission: 0.00015      # 매수/매도 수수료 (0.015%)
+  sell_tax: 0.0020         # 매도 시 거래세 (증권사·연도별로 다르니 확인 후 조정)
+  slippage: 0.0005         # 체결 미끄러짐 (0.05%)
+
+risk:
+  max_weight: 0.15         # 종목당 최대 비중 (코어 전략 합산)
+  rebalance_band: 0.01     # 자산 대비 이 비율 미만의 조정 주문은 생략
+
+strategies:
+  momentum:   {top_n: 5, lookback: 252, skip: 21, trend_ma: 120}
+  meanrev:    {max_positions: 5, rsi_period: 2, rsi_entry: 10, trend_ma: 200, exit_ma: 5, max_hold: 10}
+  factor:     {top_n: 8, mom_lookback: 126, vol_lookback: 60, w_mom: 0.4, w_lowvol: 0.4, w_reversal: 0.2}
+  breakout:   {top_n: 5, k: 0.5, trend_ma: 20, noise_lookback: 20}
+
+# 시장 국면별 전략 기본 배분 (합계 < 1 이면 나머지는 현금)
+regime:
+  trend_fast: 50
+  trend_slow: 200
+  vol_lookback: 20
+  vol_window: 252
+  vol_pct: 0.8             # 변동성이 최근 1년 중 상위 20%면 '고변동성'
+  allocations:
+    bull_calm:    {momentum: 0.35, meanrev: 0.15, factor: 0.35, breakout: 0.15}
+    bull_highvol: {momentum: 0.25, meanrev: 0.20, factor: 0.25, breakout: 0.20}
+    neutral:      {momentum: 0.15, meanrev: 0.30, factor: 0.25, breakout: 0.15}
+    bear_calm:    {momentum: 0.00, meanrev: 0.20, factor: 0.20, breakout: 0.10}
+    bear_highvol: {momentum: 0.00, meanrev: 0.15, factor: 0.10, breakout: 0.05}
+  # 최근 성과가 좋은 전략의 비중을 키우고 나쁜 전략은 줄임 (총 노출은 국면이 결정)
+  adaptive: {enabled: true, lookback: 126, strength: 0.25, min_mult: 0.5, max_mult: 1.5}
+
+paper:
+  state_file: "out/paper/state.json"
+
+# 대형주 유니버스 (현재 시점 기준 선정 → 백테스트에 생존편향 있음)
+universe:
+  "005930": 삼성전자
+  "000660": SK하이닉스
+  "373220": LG에너지솔루션
+  "207940": 삼성바이오로직스
+  "005380": 현대차
+  "000270": 기아
+  "068270": 셀트리온
+  "105560": KB금융
+  "055550": 신한지주
+  "035420": NAVER
+  "035720": 카카오
+  "012330": 현대모비스
+  "005490": POSCO홀딩스
+  "051910": LG화학
+  "006400": 삼성SDI
+  "028260": 삼성물산
+  "086790": 하나금융지주
+  "032830": 삼성생명
+  "015760": 한국전력
+  "033780": KT&G
+  "017670": SK텔레콤
+  "030200": KT
+  "066570": LG전자
+  "009150": 삼성전기
+  "010130": 고려아연
+  "011200": HMM
+  "012450": 한화에어로스페이스
+  "329180": HD현대중공업
+  "034020": 두산에너빌리티
+  "003670": 포스코퓨처엠
+  "000810": 삼성화재
+  "316140": 우리금융지주
+  "096770": SK이노베이션
+  "010950": S-Oil
+  "018260": 삼성에스디에스
+  "036570": 엔씨소프트
+  "251270": 넷마블
+  "090430": 아모레퍼시픽
+  "051900": LG생활건강
+  "247540": 에코프로비엠
+  "086520": 에코프로
+  "042660": 한화오션
+  "009540": HD한국조선해양
+  "267260": HD현대일렉트릭
+  "003550": LG
+  "034730": SK
+  "024110": 기업은행
+  "138040": 메리츠금융지주
+  "259960": 크래프톤
+  "323410": 카카오뱅크
