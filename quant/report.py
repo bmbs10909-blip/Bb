@@ -184,7 +184,7 @@ def ledger(trades: pd.DataFrame) -> tuple[dict, pd.DataFrame]:
 
 
 REASON = {"momentum": "추세추종: 12개월 상승세 상위", "meanrev": "평균회귀: 단기 과매도 반등 기대",
-          "factor": "팩터: 모멘텀·저변동성 상위"}
+          "factor": "팩터: 모멘텀·저변동성·단기반전 종합 점수 상위"}
 
 
 def write_docx(res, t, cfg: dict, state: dict, out_dir: Path, prices=None) -> Path:
