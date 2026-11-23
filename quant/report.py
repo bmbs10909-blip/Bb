@@ -1,6 +1,9 @@
 """모의매매 결과를 보기 쉬운 엑셀 파일로 저장."""
 from __future__ import annotations
 
+import io
+import os
+import shutil
 from pathlib import Path
 
 import pandas as pd
@@ -117,3 +120,138 @@ def desktop_dir() -> Path | None:
         pass
     path = Path.home() / "Desktop"
     return path if path.is_dir() else None
+
+
+RED, BLUE = "C00000", "1F4E9C"  # 국내 관례: 상승·매수는 빨강, 하락·매도는 파랑
+WEEKDAY = "월화수목금토일"
+
+
+def _signed(v: float) -> tuple[str, str]:
+    return f"{v:+.2%}", (RED if v > 0 else BLUE if v < 0 else "404040")
+
+
+def _chart_png(equity: pd.Series) -> bytes | None:
+    """자산 추이 그림. matplotlib을 쓸 수 없으면 생략."""
+    if len(equity) < 3:
+        return None
+    try:
+        import matplotlib
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as plt
+    except ImportError:
+        return None
+    fig, ax = plt.subplots(figsize=(8, 2.8))
+    ax.plot(equity.index, equity / 10000, color="#1F3864", linewidth=1.8)
+    ax.fill_between(equity.index, equity / 10000, (equity / 10000).min(), color="#1F3864", alpha=0.08)
+    ax.yaxis.set_major_formatter(lambda v, _: f"{v:,.0f}")
+    ax.grid(alpha=0.3)
+    for side in ("top", "right"):
+        ax.spines[side].set_visible(False)
+    fig.autofmt_xdate()
+    fig.tight_layout()
+    buf = io.BytesIO()
+    fig.savefig(buf, format="png", dpi=150)
+    plt.close(fig)
+    return buf.getvalue()
+
+
+def write_docx(res, t, cfg: dict, state: dict, out_dir: Path) -> Path:
+    """한눈에 읽는 일일 리포트 (Word)."""
+    from .docx_writer import Document
+
+    names = {str(k): v for k, v in cfg["universe"].items()}
+    today = res.equity.index[-1]
+    eq = float(res.equity.iloc[-1])
+    total = eq / state["capital"] - 1
+    day = float(res.equity.iloc[-1] / res.equity.iloc[-2] - 1) if len(res.equity) > 1 else 0.0
+    alloc = t.alloc.iloc[-1]
+    won = lambda v: f"{v:,.0f}"
+    side = lambda s: (SIDE[s], RED if s == "BUY" else BLUE, True)
+
+    d = Document()
+    d.title("모의매매 일일 리포트", f"{today.date()} ({WEEKDAY[today.weekday()]}) 종가 기준  ·  "
+            f"시작일 {state['start']}  ·  초기 자본 {won(state['capital'])}원")
+    d.cards([("평가금액", f"{won(eq)}원", None), ("누적 수익률", *_signed(total)), ("오늘 수익률", *_signed(day)),
+             ("현금", f"{won(res.cash)}원", None)])
+    regime = REGIME.get(t.label.iloc[-1], t.label.iloc[-1])
+    d.text(f"시장 국면은 '{regime}'입니다. 자산의 {alloc.sum():.0%}를 주식 전략에 배정하고 "
+           f"{1 - alloc.sum():.0%}는 현금으로 둡니다.", size=11)
+
+    d.heading("① 다음 거래일에 할 주문 (시가)")
+    o = res.next_orders
+    if len(o):
+        rows = [[names.get(r.ticker, r.ticker), side(r.side), f"{r.shares:,}주", f"{won(r.shares * r.close)}원",
+                 "변동성 돌파 청산" if r.sleeve == "breakout" else "코어"] for r in o.itertuples()]
+        d.table(["종목", "구분", "수량", "예상 금액", "전략"], rows, ["left", "center", "right", "right", "center"],
+                [3, 1.2, 1.5, 2.2, 2.4])
+        d.text("수량과 금액은 오늘 종가 기준 추정이며, 실제 수량은 다음 거래일 시가로 다시 계산됩니다.",
+               size=9, color="7F7F7F")
+    else:
+        d.text("주문 예정이 없습니다.")
+
+    d.heading("② 오늘 체결")
+    tr = res.trades[res.trades["date"] == today]
+    if len(tr):
+        rows = [[names.get(r.ticker, r.ticker), side(r.side), f"{r.shares:,}주", f"{won(r.price)}원",
+                 f"{won(r.shares * r.price)}원"] for r in tr.itertuples()]
+        d.table(["종목", "구분", "수량", "체결가", "금액"], rows, ["left", "center", "right", "right", "right"],
+                [3, 1.2, 1.5, 2.2, 2.4])
+    else:
+        d.text("오늘 체결된 거래가 없습니다.")
+
+    d.heading(f"③ 보유 종목 ({len(res.positions)}개)")
+    pos = res.positions.sort_values("value", ascending=False)
+    if len(pos):
+        rows = [[names.get(r.ticker, r.ticker), f"{r.core + r.breakout:,}주", f"{won(r.close)}원",
+                 f"{won(r.value)}원", f"{r.value / eq:.1%}"] for r in pos.itertuples()]
+        rows.append([("주식 합계", None, True), "", "", (f"{won(pos['value'].sum())}원", None, True),
+                     (f"{pos['value'].sum() / eq:.1%}", None, True)])
+        d.table(["종목", "수량", "종가", "평가금액", "비중"], rows, ["left", "right", "right", "right", "right"],
+                [3, 1.5, 2, 2.4, 1.4])
+    else:
+        d.text("보유 종목이 없습니다.")
+
+    d.heading("④ 변동성 돌파 감시 종목")
+    bo = res.next_breakouts
+    if len(bo):
+        rows = [[names.get(r.ticker, r.ticker), f"시가 + {won(r.trigger_above_open)}원", f"{won(r.budget)}원"]
+                for r in bo.itertuples()]
+        d.table(["종목", "매수 조건 (이 가격을 넘으면 매수)", "배정 금액"], rows, ["left", "center", "right"], [3, 4, 2.4])
+    else:
+        d.text("감시 종목이 없습니다.")
+
+    d.heading("⑤ 전략별 자금 배분")
+    d.table([STRATEGY[k] for k in alloc.index] + ["현금"],
+            [[f"{v:.0%}" for v in alloc] + [f"{1 - alloc.sum():.0%}"]], ["center"] * (len(alloc) + 1))
+
+    png = _chart_png(res.equity)
+    if png:
+        d.heading("⑥ 평가금액 추이 (만원)")
+        d.image(png, 17, 5.95)
+    d.text(f"누적 거래 {len(res.trades):,}건  ·  누적 거래 비용 {won(res.trades['fee'].sum())}원  ·  "
+           "모의매매 결과이며 실제 계좌와 무관합니다.", size=9, color="7F7F7F")
+
+    path = out_dir / f"모의매매_리포트_{today.date()}.docx"
+    d.save(path)
+    return path
+
+
+def publish(res, t, cfg: dict, state: dict, out_dir: Path, open_file: bool = True) -> None:
+    """Word 리포트를 만들고 바탕화면의 최신본을 갱신한다. 상세 내역은 엑셀로 함께 보관."""
+    report = write_docx(res, t, cfg, state, out_dir)
+    print(f"\nWord 리포트 저장: {report.resolve()}")
+    try:
+        write_excel(res, t, cfg, state, out_dir)
+    except (ImportError, PermissionError):
+        pass  # 엑셀은 상세 보관용이라 없어도 진행
+    desktop = desktop_dir() if cfg["paper"].get("desktop_copy", True) else None
+    if desktop:
+        latest = desktop / "모의매매_리포트.docx"
+        try:
+            shutil.copyfile(report, latest)
+            print(f"바탕화면 최신본 갱신: {latest}")
+            report = latest
+        except PermissionError:
+            print("바탕화면의 '모의매매_리포트.docx'가 Word에 열려 있어 갱신하지 못했습니다. 닫고 다시 실행하세요.")
+    if open_file and hasattr(os, "startfile"):
+        os.startfile(report)  # Windows에서는 바로 열어 줌

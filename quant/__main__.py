@@ -3,8 +3,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
-import shutil
 from pathlib import Path
 
 import pandas as pd
@@ -112,27 +110,15 @@ def cmd_paper(cfg, args):
     res.equity.to_csv(out / "equity.csv")
     res.trades.to_csv(out / "trades.csv", index=False)
     res.next_orders.to_csv(out / "next_orders.csv", index=False)
-    try:
-        from .report import desktop_dir, write_excel
+    from .report import publish
 
-        report = write_excel(res, t, cfg, state, out)
-        print(f"\n엑셀 리포트 저장: {report.resolve()}")
-        # 바탕화면에는 항상 같은 이름으로 최신본을 둔다
-        desktop = desktop_dir() if cfg["paper"].get("desktop_copy", True) else None
-        if desktop:
-            latest = desktop / "모의매매_리포트.xlsx"
-            try:
-                shutil.copyfile(report, latest)
-                print(f"바탕화면 최신본 갱신: {latest}")
-                report = latest
-            except PermissionError:
-                print("바탕화면의 '모의매매_리포트.xlsx'가 엑셀에 열려 있어 갱신하지 못했습니다. 닫고 다시 실행하세요.")
-        if not args.no_open and hasattr(os, "startfile"):
-            os.startfile(report)  # Windows에서는 바로 열어 줌
-    except ImportError:
-        print("\n엑셀 리포트를 만들려면 'python -m pip install openpyxl' 을 실행하세요.")
-    except PermissionError:
-        print("\n엑셀 리포트를 저장하지 못했습니다. 같은 날짜의 리포트가 엑셀에 열려 있으면 닫고 다시 실행하세요.")
+    publish(res, t, cfg, state, out, open_file=not args.no_open)
+
+
+def cmd_schedule(cfg, args):
+    from .schedule import install, remove
+
+    remove() if args.remove else install(args.time)
 
 
 def main():
@@ -144,10 +130,13 @@ def main():
     b.add_argument("--refresh", action="store_true", help="캐시를 무시하고 데이터 새로 받기")
     pp = sub.add_parser("paper", help="모의매매 (장 마감 후 하루 한 번)")
     pp.add_argument("--reset", action="store_true", help="오늘부터 새로 시작")
-    pp.add_argument("--no-open", action="store_true", help="엑셀 리포트를 자동으로 열지 않음")
+    pp.add_argument("--no-open", action="store_true", help="리포트를 자동으로 열지 않음")
+    sc = sub.add_parser("schedule", help="평일 장 마감 후 모의매매 자동 실행 등록 (Windows)")
+    sc.add_argument("--time", default="15:50", help="실행 시각 (기본 15:50)")
+    sc.add_argument("--remove", action="store_true", help="자동 실행 해제")
     args = ap.parse_args()
     cfg = yaml.safe_load(Path(args.config).read_text(encoding="utf-8"))
-    {"backtest": cmd_backtest, "paper": cmd_paper}[args.cmd](cfg, args)
+    {"backtest": cmd_backtest, "paper": cmd_paper, "schedule": cmd_schedule}[args.cmd](cfg, args)
 
 
 if __name__ == "__main__":

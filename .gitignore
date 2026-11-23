@@ -4,3 +4,4 @@ __pycache__/
 data/
 out/
 .env
+run_paper.bat

@@ -141,9 +141,10 @@ def simulate(p: Prices, t: Targets, cfg: dict, start: str | None = None) -> Resu
         tgt = np.where(last > 0, np.floor(np.nan_to_num(W[-1]) * eq_now / last), 0).astype(np.int64)
     diff = tgt - core
     diff[(np.abs(diff) * last < band * eq_now) & (tgt > 0)] = 0
-    rows = [(tickers[j], "BUY" if diff[j] > 0 else "SELL", abs(int(diff[j])), "core") for j in np.flatnonzero(diff)]
-    rows += [(tickers[j], "SELL", int(bo[j]), "breakout") for j in np.flatnonzero(bo)]
-    next_orders = pd.DataFrame(rows, columns=["ticker", "side", "shares", "sleeve"])
+    rows = [(tickers[j], "BUY" if diff[j] > 0 else "SELL", abs(int(diff[j])), "core", last[j])
+            for j in np.flatnonzero(diff)]
+    rows += [(tickers[j], "SELL", int(bo[j]), "breakout", last[j]) for j in np.flatnonzero(bo)]
+    next_orders = pd.DataFrame(rows, columns=["ticker", "side", "shares", "sleeve", "close"])
     cand = np.flatnonzero((BW[-1] > 0) & (R[-1] > 0))
     next_bo = pd.DataFrame({"ticker": [tickers[j] for j in cand], "trigger_above_open": k * R[-1, cand],
                             "budget": BW[-1, cand] * eq_now})

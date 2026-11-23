@@ -58,10 +58,19 @@ breakout을 0으로 두면 꺼집니다.
 - 자본이 작으면 1주 단위 반올림 때문에 목표 비중보다 덜 담깁니다.
 - 과거 성과는 미래 수익을 보장하지 않습니다.
 
-## 엑셀 리포트
+## 일일 리포트와 자동 실행
 
-`python -m quant paper`를 실행할 때마다 `out/paper/모의매매_리포트_날짜.xlsx`가 만들어지고 Windows에서는 바로 열립니다
-(자동으로 열지 않으려면 `--no-open`). 시트 구성: 요약, 보유 종목, 오늘 체결, 다음 거래일 주문, 변동성 돌파 감시,
-자산 추이(차트 포함), 전체 거래내역.
+`python -m quant paper`를 실행할 때마다 Word 리포트가 만들어집니다.
 
-바탕화면에는 `모의매매_리포트.xlsx`라는 같은 이름으로 최신본이 매번 덮어써집니다 (`config.yaml`의 `paper.desktop_copy`).
+- 바탕화면의 `모의매매_리포트.docx`: 항상 같은 이름으로 최신본이 덮어써집니다 (`config.yaml`의 `paper.desktop_copy`).
+- `out/paper/모의매매_리포트_날짜.docx`: 날짜별 보관본. 전체 거래내역은 같은 폴더의 `.xlsx`에 있습니다.
+
+Windows에서 평일 장 마감 후 자동으로 실행하려면 한 번만 등록합니다.
+
+```bash
+python -m quant schedule                # 평일 15:50 자동 실행 등록
+python -m quant schedule --time 16:10   # 시각 변경
+python -m quant schedule --remove       # 해제
+```
+
+그 시각에 PC가 꺼져 있었으면 다음에 켰을 때 실행됩니다. 바탕화면 리포트가 Word에 열려 있으면 갱신되지 않으니 보고 나서 닫아 두세요.
