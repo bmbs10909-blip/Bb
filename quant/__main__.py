@@ -76,6 +76,12 @@ def cmd_paper(cfg, args):
     """
     state_path = Path(cfg["paper"]["state_file"])
     p, index_close = load_all(cfg, None, refresh=True)
+    # 장 마감(15:30) 전에 실행하면 오늘 봉이 미완성이므로 빼고, 전 거래일 종가 기준으로 계산한다
+    now = pd.Timestamp.now(tz="Asia/Seoul")
+    if p.close.index[-1].date() == now.date() and (now.hour, now.minute) < (15, 40):
+        last_done = p.close.index[-2]
+        p, index_close = p.loc(end=last_done), index_close.loc[:last_done]
+        print(f"장 마감 전이라 오늘 봉은 제외하고 {last_done.date()} 종가 기준으로 계산합니다.")
     if args.reset or not state_path.exists():
         state = {"start": str(p.close.index[-1].date()), "capital": cfg["capital"]}
         state_path.parent.mkdir(parents=True, exist_ok=True)
@@ -96,7 +102,7 @@ def cmd_paper(cfg, args):
           f"현금 {res.cash:,.0f}원")
     fmt = lambda df: named(df, cfg).to_string(index=False) if len(df) else "  (없음)"
     print("\n보유 종목\n" + fmt(res.positions))
-    print("\n오늘 체결\n" + fmt(res.trades[res.trades["date"] == today].drop(columns="date")))
+    print(f"\n{today.date()} 체결\n" + fmt(res.trades[res.trades["date"] == today].drop(columns="date")))
     print("\n다음 거래일 시가 주문 예정 (수량은 종가 기준 추정)\n" + fmt(res.next_orders))
     print("\n다음 거래일 변동성 돌파 감시 (시가 + trigger_above_open 돌파 시 budget만큼 매수)\n" + fmt(res.next_breakouts))
 
