@@ -112,7 +112,7 @@ def cmd_paper(cfg, args):
     res.next_orders.to_csv(out / "next_orders.csv", index=False)
     from .report import publish
 
-    publish(res, t, cfg, state, out, open_file=not args.no_open)
+    publish(res, t, cfg, state, out, open_file=not args.no_open, prices=p)
 
 
 def cmd_schedule(cfg, args):

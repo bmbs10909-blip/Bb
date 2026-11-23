@@ -91,3 +91,21 @@ def test_halted_stock_is_not_traded(data):
 def test_month_end_mask():
     idx = pd.to_datetime(["2024-01-30", "2024-01-31", "2024-02-01", "2024-02-29"])
     assert strategies.month_end_mask(idx).tolist() == [False, True, False, True]
+
+
+def test_ledger_matches_equity(data, tmp_path):
+    """실현손익 + 보유분 평가손익이 자산 증감과 일치하고, Word 리포트가 만들어진다."""
+    from quant.report import ledger, write_docx
+
+    p, index = data
+    t = build_targets(p, index, CFG)
+    res = simulate(p, t, CFG)
+    held, closed = ledger(res.trades)
+    close = p.close.ffill().iloc[-1]
+    unrealized = sum(h["shares"] * close[tk] - h["cost"] for (tk, _), h in held.items())
+    assert closed["pnl"].sum() + unrealized == pytest.approx(res.equity.iloc[-1] - CFG["capital"])
+    assert sum(h["shares"] for h in held.values()) == res.positions[["core", "breakout"]].to_numpy().sum()
+
+    cfg = {**CFG, "universe": {c: c for c in p.close.columns}}
+    path = write_docx(res, t, cfg, {"start": "2020-01-01", "capital": CFG["capital"]}, tmp_path, p)
+    assert path.stat().st_size > 5000

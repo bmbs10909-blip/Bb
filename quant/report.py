@@ -155,18 +155,62 @@ def _chart_png(equity: pd.Series) -> bytes | None:
     return buf.getvalue()
 
 
-def write_docx(res, t, cfg: dict, state: dict, out_dir: Path) -> Path:
+def ledger(trades: pd.DataFrame) -> tuple[dict, pd.DataFrame]:
+    """거래내역에서 보유분의 매수 원가와 매도분의 실현손익을 계산한다 (수수료·세금 포함, 평균단가 기준).
+
+    돌려주는 값: (보유분 {(종목, 전략): {shares, cost, first, last}}, 매도 완료 내역 표)
+    """
+    held: dict = {}
+    closed = []
+    for r in trades.itertuples():
+        key = (r.ticker, r.sleeve)
+        if r.side == "BUY":
+            h = held.setdefault(key, {"shares": 0, "cost": 0.0, "first": r.date, "last": r.date})
+            h["shares"] += r.shares
+            h["cost"] += r.shares * r.price + r.fee
+            h["last"] = r.date
+        else:
+            h = held[key]
+            basis = h["cost"] / h["shares"] * r.shares
+            pnl = r.shares * r.price - r.fee - basis
+            closed.append((r.ticker, r.sleeve, h["first"], r.date, r.shares, basis / r.shares, r.price, pnl,
+                           pnl / basis))
+            h["shares"] -= r.shares
+            h["cost"] -= basis
+            if h["shares"] == 0:
+                del held[key]
+    cols = ["ticker", "sleeve", "buy_date", "sell_date", "shares", "buy_price", "sell_price", "pnl", "pct"]
+    return held, pd.DataFrame(closed, columns=cols)
+
+
+REASON = {"momentum": "추세추종: 12개월 상승세 상위", "meanrev": "평균회귀: 단기 과매도 반등 기대",
+          "factor": "팩터: 모멘텀·저변동성 상위"}
+
+
+def write_docx(res, t, cfg: dict, state: dict, out_dir: Path, prices=None) -> Path:
     """한눈에 읽는 일일 리포트 (Word)."""
     from .docx_writer import Document
 
     names = {str(k): v for k, v in cfg["universe"].items()}
+    nm = lambda tk: names.get(tk, tk)
     today = res.equity.index[-1]
     eq = float(res.equity.iloc[-1])
     total = eq / state["capital"] - 1
     day = float(res.equity.iloc[-1] / res.equity.iloc[-2] - 1) if len(res.equity) > 1 else 0.0
     alloc = t.alloc.iloc[-1]
     won = lambda v: f"{v:,.0f}"
+    md = lambda dt: f"{dt.month}/{dt.day}"
     side = lambda s: (SIDE[s], RED if s == "BUY" else BLUE, True)
+    color = lambda v: RED if v > 0 else BLUE if v < 0 else "404040"
+    money = lambda v: (f"{v:+,.0f}원", color(v))
+    pct = lambda v: (f"{v:+.1%}", color(v))
+
+    close = prices.close.ffill().iloc[-1] if prices is not None else res.positions.set_index("ticker")["close"]
+    ret = lambda days: (prices.close.ffill().iloc[-1] / prices.close.ffill().iloc[-1 - days] - 1) if prices is not None else None
+    r1m, r6m = ret(21), ret(126)
+    held, closed = ledger(res.trades)
+    today_tr = res.trades[res.trades["date"] == today]
+    today_closed = closed[closed["sell_date"] == today]
 
     d = Document()
     d.title("모의매매 일일 리포트", f"{today.date()} ({WEEKDAY[today.weekday()]}) 종가 기준  ·  "
@@ -177,48 +221,113 @@ def write_docx(res, t, cfg: dict, state: dict, out_dir: Path) -> Path:
     d.text(f"시장 국면은 '{regime}'입니다. 자산의 {alloc.sum():.0%}를 주식 전략에 배정하고 "
            f"{1 - alloc.sum():.0%}는 현금으로 둡니다.", size=11)
 
-    d.heading("① 다음 거래일에 할 주문 (시가)")
+    # ① 내일 매수 후보
+    d.heading("① 다음 거래일 매수 후보 (시가 매수)")
     o = res.next_orders
-    if len(o):
-        rows = [[names.get(r.ticker, r.ticker), side(r.side), f"{r.shares:,}주", f"{won(r.shares * r.close)}원",
-                 "변동성 돌파 청산" if r.sleeve == "breakout" else "코어"] for r in o.itertuples()]
-        d.table(["종목", "구분", "수량", "예상 금액", "전략"], rows, ["left", "center", "right", "right", "center"],
-                [3, 1.2, 1.5, 2.2, 2.4])
-        d.text("수량과 금액은 오늘 종가 기준 추정이며, 실제 수량은 다음 거래일 시가로 다시 계산됩니다.",
-               size=9, color="7F7F7F")
+    buys, sells = o[o["side"] == "BUY"], o[o["side"] == "SELL"]
+    if len(buys):
+        rows = []
+        for r in buys.itertuples():
+            why = [REASON[n] for n in REASON if t.sleeves[n].iloc[-1].get(r.ticker, 0) > 0] or ["비중 조정"]
+            rows.append([(nm(r.ticker), None, True), " / ".join(why), f"{r.shares:,}주", f"{won(r.shares * r.close)}원",
+                         f"{won(r.close)}원", pct(r1m[r.ticker]) if r1m is not None else "",
+                         pct(r6m[r.ticker]) if r6m is not None else ""])
+        d.table(["종목", "선정 이유", "수량", "예상 금액", "종가", "1개월", "6개월"], rows,
+                ["left", "left", "right", "right", "right", "right", "right"], [2.3, 4.4, 1.1, 1.9, 1.7, 1.2, 1.2], size=9)
+        d.text("수량·금액은 오늘 종가 기준 추정이며 실제 수량은 다음 거래일 시가로 다시 계산됩니다. "
+               "1개월·6개월은 최근 주가 수익률입니다.", size=9, color="7F7F7F")
     else:
-        d.text("주문 예정이 없습니다.")
+        d.text("새로 매수할 종목이 없습니다.")
 
-    d.heading("② 오늘 체결")
-    tr = res.trades[res.trades["date"] == today]
-    if len(tr):
-        rows = [[names.get(r.ticker, r.ticker), side(r.side), f"{r.shares:,}주", f"{won(r.price)}원",
-                 f"{won(r.shares * r.price)}원"] for r in tr.itertuples()]
-        d.table(["종목", "구분", "수량", "체결가", "금액"], rows, ["left", "center", "right", "right", "right"],
-                [3, 1.2, 1.5, 2.2, 2.4])
+    bo = res.next_breakouts
+    if len(bo):
+        d.text("조건부 매수 (변동성 돌파): 장중에 아래 가격을 넘으면 매수하고 그다음 날 시가에 청산합니다.", bold=True)
+        rows = [[(nm(r.ticker), None, True), f"시가 + {won(r.trigger_above_open)}원", f"{won(close[r.ticker])}원",
+                 f"{won(r.budget)}원"] for r in bo.itertuples()]
+        d.table(["종목", "매수 조건", "오늘 종가", "배정 금액"], rows, ["left", "center", "right", "right"],
+                [3, 3.5, 2, 2.2], size=9)
+
+    if len(sells):
+        d.text("다음 거래일 매도 예정 (시가)", bold=True)
+        rows = []
+        for r in sells.itertuples():
+            h = held.get((r.ticker, r.sleeve))
+            gain = (r.close * h["shares"] - h["cost"]) / h["cost"] if h else 0.0
+            why = "돌파 물량 청산" if r.sleeve == "breakout" else (
+                "전략에서 제외" if t.core.iloc[-1].get(r.ticker, 0) == 0 else "비중 축소")
+            rows.append([(nm(r.ticker), None, True), why, f"{r.shares:,}주", f"{won(r.close)}원", pct(gain)])
+        d.table(["종목", "사유", "수량", "오늘 종가", "현재 수익률"], rows, ["left", "left", "right", "right", "right"],
+                [3, 3, 1.5, 2, 1.8], size=9)
+
+    # ② 오늘 체결
+    d.heading("② 오늘 체결 (언제·얼마에 사고팔았나)")
+    if len(today_tr):
+        rows = []
+        sold = {(r.ticker, r.sleeve): r for r in today_closed.itertuples()}
+        for r in today_tr.itertuples():
+            when = "장중 돌파" if (r.sleeve == "breakout" and r.side == "BUY") else "시가"
+            if r.side == "BUY":  # 산 가격 대비 오늘 종가
+                diff, rate, note = (close[r.ticker] - r.price) * r.shares, close[r.ticker] / r.price - 1, "종가 대비"
+            else:               # 매수 원가 대비 실현손익
+                c = sold[(r.ticker, r.sleeve)]
+                diff, rate, note = c.pnl, c.pct, "실현손익"
+            rows.append([(nm(r.ticker), None, True), side(r.side), f"{md(today)} {when}", f"{r.shares:,}주",
+                         f"{won(r.price)}원", f"{won(close[r.ticker])}원", (f"{diff:+,.0f}원 ({rate:+.1%})", color(diff)),
+                         note])
+        d.table(["종목", "구분", "시점", "수량", "체결가", "종가", "손익", "기준"], rows,
+                ["left", "center", "center", "right", "right", "right", "right", "center"],
+                [2.3, 1, 1.7, 1.1, 1.7, 1.7, 2.7, 1.3], size=9)
+        d.text("매수의 손익은 체결가 대비 오늘 종가, 매도의 손익은 매수 원가 대비 실현손익(수수료·세금 포함)입니다.",
+               size=9, color="7F7F7F")
     else:
         d.text("오늘 체결된 거래가 없습니다.")
 
-    d.heading(f"③ 보유 종목 ({len(res.positions)}개)")
-    pos = res.positions.sort_values("value", ascending=False)
-    if len(pos):
-        rows = [[names.get(r.ticker, r.ticker), f"{r.core + r.breakout:,}주", f"{won(r.close)}원",
-                 f"{won(r.value)}원", f"{r.value / eq:.1%}"] for r in pos.itertuples()]
-        rows.append([("주식 합계", None, True), "", "", (f"{won(pos['value'].sum())}원", None, True),
-                     (f"{pos['value'].sum() / eq:.1%}", None, True)])
-        d.table(["종목", "수량", "종가", "평가금액", "비중"], rows, ["left", "right", "right", "right", "right"],
-                [3, 1.5, 2, 2.4, 1.4])
+    # ③ 보유 종목
+    d.heading(f"③ 보유 종목 ({len(held)}개)")
+    if held:
+        bought_today = {(r.ticker, r.sleeve) for r in today_tr.itertuples() if r.side == "BUY"}
+        sold_today = {(r.ticker, r.sleeve) for r in today_tr.itertuples() if r.side == "SELL"}
+        rows, tot_cost, tot_val = [], 0.0, 0.0
+        for key, h in sorted(held.items(), key=lambda kv: -kv[1]["shares"] * close[kv[0][0]]):
+            tk = key[0]
+            value = h["shares"] * close[tk]
+            status = ("신규 매수", RED, True) if h["first"] == today else \
+                ("추가 매수", RED, False) if key in bought_today else \
+                ("일부 매도", BLUE, False) if key in sold_today else ("계속 보유", "404040", False)
+            name = nm(tk) + (" (돌파)" if key[1] == "breakout" else "")
+            rows.append([(name, None, True), status, f"{md(h['first'])} ({(today - h['first']).days}일)",
+                         f"{h['shares']:,}주", f"{won(h['cost'] / h['shares'])}원", f"{won(close[tk])}원",
+                         money(value - h["cost"]), pct(value / h["cost"] - 1)])
+            tot_cost, tot_val = tot_cost + h["cost"], tot_val + value
+        rows.append([("합계", None, True), "", "", "", "", (f"{won(tot_val)}원", None, True),
+                     (*money(tot_val - tot_cost), True), (*pct(tot_val / tot_cost - 1), True)])
+        d.table(["종목", "상태", "매수일 (보유)", "수량", "평균 매수가", "종가", "평가손익", "수익률"], rows,
+                ["left", "center", "center", "right", "right", "right", "right", "right"],
+                [2.6, 1.5, 1.9, 1.1, 1.8, 1.7, 1.8, 1.2], size=9)
+        d.text(f"주식 비중 {tot_val / eq:.1%}. 평균 매수가에는 수수료가 포함되어 있습니다.", size=9, color="7F7F7F")
     else:
         d.text("보유 종목이 없습니다.")
 
-    d.heading("④ 변동성 돌파 감시 종목")
-    bo = res.next_breakouts
-    if len(bo):
-        rows = [[names.get(r.ticker, r.ticker), f"시가 + {won(r.trigger_above_open)}원", f"{won(r.budget)}원"]
-                for r in bo.itertuples()]
-        d.table(["종목", "매수 조건 (이 가격을 넘으면 매수)", "배정 금액"], rows, ["left", "center", "right"], [3, 4, 2.4])
+    # ④ 매도 완료 (익절·손절)
+    d.heading("④ 매도 완료 종목 (익절·손절)")
+    if len(closed):
+        win, loss = closed[closed["pnl"] > 0], closed[closed["pnl"] <= 0]
+        d.text(f"누적 실현손익 {closed['pnl'].sum():+,.0f}원  ·  익절 {len(win)}건 {win['pnl'].sum():+,.0f}원  ·  "
+               f"손절 {len(loss)}건 {loss['pnl'].sum():+,.0f}원", bold=True)
+        cut = sorted({nm(tk) for tk in today_closed[today_closed["pnl"] <= 0]["ticker"]})
+        took = sorted({nm(tk) for tk in today_closed[today_closed["pnl"] > 0]["ticker"]})
+        d.text(f"오늘 손절: {', '.join(cut) or '없음'}   /   오늘 익절: {', '.join(took) or '없음'}")
+        recent = closed.iloc[::-1].head(15)
+        rows = [[(nm(r.ticker), None, True), md(r.buy_date), md(r.sell_date), f"{r.shares:,}주",
+                 f"{won(r.buy_price)}원", f"{won(r.sell_price)}원", money(r.pnl), pct(r.pct),
+                 ("익절", RED, True) if r.pnl > 0 else ("손절", BLUE, True)] for r in recent.itertuples()]
+        d.table(["종목", "매수일", "매도일", "수량", "매수가", "매도가", "실현손익", "수익률", "구분"], rows,
+                ["left", "center", "center", "right", "right", "right", "right", "right", "center"],
+                [2.4, 1.1, 1.1, 1.1, 1.7, 1.7, 1.7, 1.2, 1], size=9)
+        d.text("최근 15건까지 표시합니다. '손절'은 손실 상태로 매도된 거래를 뜻하며, 정해진 손절선이 아니라 "
+               "전략 신호(종목 교체·청산 조건)에 따라 매도된 것입니다.", size=9, color="7F7F7F")
     else:
-        d.text("감시 종목이 없습니다.")
+        d.text("아직 매도한 종목이 없습니다.")
 
     d.heading("⑤ 전략별 자금 배분")
     d.table([STRATEGY[k] for k in alloc.index] + ["현금"],
@@ -236,9 +345,9 @@ def write_docx(res, t, cfg: dict, state: dict, out_dir: Path) -> Path:
     return path
 
 
-def publish(res, t, cfg: dict, state: dict, out_dir: Path, open_file: bool = True) -> None:
+def publish(res, t, cfg: dict, state: dict, out_dir: Path, open_file: bool = True, prices=None) -> None:
     """Word 리포트를 만들고 바탕화면의 최신본을 갱신한다. 상세 내역은 엑셀로 함께 보관."""
-    report = write_docx(res, t, cfg, state, out_dir)
+    report = write_docx(res, t, cfg, state, out_dir, prices)
     print(f"\nWord 리포트 저장: {report.resolve()}")
     try:
         write_excel(res, t, cfg, state, out_dir)

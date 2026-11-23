@@ -43,7 +43,7 @@ class Document:
         self.body.append(para(run(text, **kw)))
 
     def table(self, headers: list[str], rows: list[list], aligns: list[str] | None = None,
-              widths: list[float] | None = None, header_fill="1F3864"):
+              widths: list[float] | None = None, header_fill="1F3864", size=10):
         """rows의 각 칸은 문자열 또는 (문자열, 색) 또는 (문자열, 색, 굵게)."""
         n = len(headers)
         aligns = aligns or ["left"] * n
@@ -62,13 +62,13 @@ class Document:
                  '<w:bottom w:w="60" w:type="dxa"/><w:right w:w="100" w:type="dxa"/></w:tblCellMar></w:tblPr>'
                + "<w:tblGrid>" + "".join(f'<w:gridCol w:w="{c}"/>' for c in cols) + "</w:tblGrid>"]
         out.append("<w:tr><w:trPr><w:tblHeader/></w:trPr>" + "".join(
-            cell(i, para(run(h, bold=True, color="FFFFFF", size=10), "center", after=0), header_fill)
+            cell(i, para(run(h, bold=True, color="FFFFFF", size=size), "center", after=0), header_fill)
             for i, h in enumerate(headers)) + "</w:tr>")
         for k, row in enumerate(rows):
             cells = []
             for i, v in enumerate(row):
                 text, color, bold = (v + (None, False))[:3] if isinstance(v, tuple) else (v, None, False)
-                cells.append(cell(i, para(run(text, bold=bold, color=color, size=10), aligns[i], after=0),
+                cells.append(cell(i, para(run(text, bold=bold, color=color, size=size), aligns[i], after=0),
                                   "F2F2F2" if k % 2 else None))
             out.append("<w:tr>" + "".join(cells) + "</w:tr>")
         self.body.append("".join(out) + "</w:tbl>" + para("", after=0))
