@@ -109,3 +109,17 @@ def test_ledger_matches_equity(data, tmp_path):
     cfg = {**CFG, "universe": {c: c for c in p.close.columns}}
     path = write_docx(res, t, cfg, {"start": "2020-01-01", "capital": CFG["capital"]}, tmp_path, p)
     assert path.stat().st_size > 5000
+
+
+def test_reports_on_first_day_without_trades(data, tmp_path):
+    """모의매매 첫날(거래 0건)에도 Word·엑셀 리포트가 만들어져야 한다."""
+    from quant.report import write_docx, write_excel
+
+    p, index = data
+    t = build_targets(p, index, CFG)
+    res = simulate(p, t, CFG, start=str((p.close.index[-1] + pd.DateOffset(days=1)).date()))
+    assert res.trades.empty and len(res.next_orders) > 0
+    cfg = {**CFG, "universe": {c: c for c in p.close.columns}}
+    state = {"start": str(p.close.index[-1].date()), "capital": CFG["capital"]}
+    assert write_docx(res, t, cfg, state, tmp_path, p).exists()
+    assert write_excel(res, t, cfg, state, tmp_path).exists()

@@ -130,6 +130,7 @@ def simulate(p: Prices, t: Targets, cfg: dict, start: str | None = None) -> Resu
     if start:
         eq_s = eq_s.iloc[first - 1:]
     tr = pd.DataFrame(trades, columns=["date", "ticker", "side", "shares", "price", "sleeve", "fee"])
+    tr["date"] = pd.to_datetime(tr["date"])  # 거래가 한 건도 없을 때도 날짜 형식 유지
 
     last = np.nan_to_num(C[-1])
     held = np.flatnonzero((core + bo) > 0)
