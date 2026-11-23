@@ -39,6 +39,7 @@ regime:
 
 paper:
   state_file: "out/paper/state.json"
+  desktop_copy: true       # 실행할 때마다 바탕화면의 모의매매_리포트.xlsx 를 최신본으로 갱신
 
 # 대형주 유니버스 (현재 시점 기준 선정 → 백테스트에 생존편향 있음)
 universe:

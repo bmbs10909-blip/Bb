@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import shutil
 from pathlib import Path
 
 import pandas as pd
@@ -112,10 +113,20 @@ def cmd_paper(cfg, args):
     res.trades.to_csv(out / "trades.csv", index=False)
     res.next_orders.to_csv(out / "next_orders.csv", index=False)
     try:
-        from .report import write_excel
+        from .report import desktop_dir, write_excel
 
         report = write_excel(res, t, cfg, state, out)
         print(f"\n엑셀 리포트 저장: {report.resolve()}")
+        # 바탕화면에는 항상 같은 이름으로 최신본을 둔다
+        desktop = desktop_dir() if cfg["paper"].get("desktop_copy", True) else None
+        if desktop:
+            latest = desktop / "모의매매_리포트.xlsx"
+            try:
+                shutil.copyfile(report, latest)
+                print(f"바탕화면 최신본 갱신: {latest}")
+                report = latest
+            except PermissionError:
+                print("바탕화면의 '모의매매_리포트.xlsx'가 엑셀에 열려 있어 갱신하지 못했습니다. 닫고 다시 실행하세요.")
         if not args.no_open and hasattr(os, "startfile"):
             os.startfile(report)  # Windows에서는 바로 열어 줌
     except ImportError:

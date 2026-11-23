@@ -100,3 +100,20 @@ def write_excel(res, t, cfg: dict, state: dict, out_dir: Path) -> Path:
             chart.set_categories(Reference(ws, min_col=1, min_row=2, max_row=ws.max_row))
             ws.add_chart(chart, "F2")
     return path
+
+
+def desktop_dir() -> Path | None:
+    """바탕화면 폴더. Windows에서는 OneDrive로 옮겨진 경우도 찾는다."""
+    try:
+        import os
+        import winreg
+
+        key = r"Software\Microsoft\Windows\CurrentVersion\Explorer\User Shell Folders"
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, key) as k:
+            path = Path(os.path.expandvars(winreg.QueryValueEx(k, "Desktop")[0]))
+        if path.is_dir():
+            return path
+    except (ImportError, OSError):
+        pass
+    path = Path.home() / "Desktop"
+    return path if path.is_dir() else None
