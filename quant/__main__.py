@@ -115,6 +115,33 @@ def cmd_paper(cfg, args):
     publish(res, t, cfg, state, out, open_file=not args.no_open, prices=p)
 
 
+def cmd_fills(cfg, args):
+    """장중 확인용: 오늘 지금까지 체결된 모의 주문을 보여준다 (시가 체결분 + 이미 돌파한 변동성 돌파 매수).
+
+    시가는 장 시작 직후 확정되므로 시가 체결 내역은 장중에도 정확하다. 기록·리포트는 바꾸지 않는다.
+    """
+    state_path = Path(cfg["paper"]["state_file"])
+    if not state_path.exists():
+        print("모의매매를 아직 시작하지 않았습니다. 먼저 python -m quant paper 를 실행하세요.")
+        return
+    state = json.loads(state_path.read_text())
+    p, index_close = load_all(cfg, None, refresh=True)
+    cfg = {**cfg, "capital": state["capital"]}
+    res = simulate(p, build_targets(p, index_close, cfg), cfg,
+                   str((pd.Timestamp(state["start"]) + pd.DateOffset(days=1)).date()))
+    last = p.close.index[-1]
+    if last.date() != pd.Timestamp.now(tz="Asia/Seoul").date():
+        print(f"오늘 시세가 아직 없습니다 (최근 거래일 {last.date()}). 휴장일이거나 장 시작 전입니다.")
+        return
+    names = {str(k): v for k, v in cfg["universe"].items()}
+    tr = res.trades[res.trades["date"] == last]
+    print(f"{last.date()} 체결 {len(tr)}건")
+    for r in tr.itertuples():
+        when = "장중 돌파" if (r.sleeve == "breakout" and r.side == "BUY") else "시가"
+        side = "매수" if r.side == "BUY" else "매도"
+        print(f"{side} {names.get(r.ticker, r.ticker)} {r.shares:,}주 @ {r.price:,.0f}원 ({when}, {r.shares * r.price:,.0f}원)")
+
+
 def cmd_schedule(cfg, args):
     from .schedule import install, remove
 
@@ -134,9 +161,10 @@ def main():
     sc = sub.add_parser("schedule", help="평일 장 마감 후 모의매매 자동 실행 등록 (Windows)")
     sc.add_argument("--time", default="15:50", help="실행 시각 (기본 15:50)")
     sc.add_argument("--remove", action="store_true", help="자동 실행 해제")
+    sub.add_parser("fills", help="오늘 지금까지 체결된 모의 주문 보기 (장중 확인용)")
     args = ap.parse_args()
     cfg = yaml.safe_load(Path(args.config).read_text(encoding="utf-8"))
-    {"backtest": cmd_backtest, "paper": cmd_paper, "schedule": cmd_schedule}[args.cmd](cfg, args)
+    {"backtest": cmd_backtest, "paper": cmd_paper, "schedule": cmd_schedule, "fills": cmd_fills}[args.cmd](cfg, args)
 
 
 if __name__ == "__main__":

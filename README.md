@@ -27,6 +27,7 @@ pip install -r requirements.txt
 python -m quant backtest                 # 과거 검증 → out/backtest/ 에 결과와 차트
 python -m quant paper                    # 모의매매: 장 마감 후 하루 한 번 실행
 python -m quant paper --reset            # 모의매매를 오늘부터 다시 시작
+python -m quant fills                    # 장중 확인: 오늘 지금까지 체결된 모의 주문
 python -m pytest                         # 테스트 (네트워크 불필요)
 ```
 
